@@ -1,0 +1,29 @@
+{
+  "name": "tekton-pipeline-demo",
+  "version": "1.0.0",
+  "description": "A sample Node.js application for Tekton CI/CD pipeline demonstration",
+  "main": "app.js",
+  "scripts": {
+    "start": "node app.js",
+    "test": "npm run test:unit",
+    "test:unit": "mocha test/**/*.test.js",
+    "lint": "eslint .",
+    "dev": "nodemon app.js"
+  },
+  "keywords": ["tekton", "cicd", "nodejs", "kubernetes"],
+  "author": "TektonPipeline Demo",
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.18.2"
+  },
+  "devDependencies": {
+    "mocha": "^10.2.0",
+    "chai": "^4.3.7",
+    "eslint": "^8.45.0",
+    "nodemon": "^3.0.1",
+    "supertest": "^6.3.3"
+  },
+  "engines": {
+    "node": ">=16.0.0"
+  }
+}

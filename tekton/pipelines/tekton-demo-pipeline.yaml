@@ -1,0 +1,148 @@
+apiVersion: tekton.dev/v1beta1
+kind: Pipeline
+metadata:
+  name: tekton-demo-pipeline
+  namespace: tekton-pipelines
+spec:
+  description: Complete CI/CD pipeline for Node.js application
+  params:
+    - name: git-url
+      description: Git repository URL
+      type: string
+    - name: git-revision
+      description: Git revision (branch, tag, commit)
+      type: string
+      default: "main"
+    - name: image-registry
+      description: Container registry URL
+      type: string
+      default: "docker.io"
+    - name: image-namespace
+      description: Container registry namespace/organization
+      type: string
+    - name: image-name
+      description: Container image name
+      type: string
+      default: "tekton-demo-app"
+    - name: image-tag
+      description: Container image tag
+      type: string
+      default: "latest"
+    - name: deploy-namespace
+      description: Kubernetes namespace for deployment
+      type: string
+      default: "default"
+    - name: app-name
+      description: Application name for deployment
+      type: string
+      default: "tekton-demo-app"
+
+  workspaces:
+    - name: shared-data
+      description: Shared workspace for pipeline tasks
+    - name: docker-credentials
+      description: Docker registry credentials
+      optional: true
+
+  tasks:
+    # Task 1: Clone source code from Git repository
+    - name: fetch-source
+      taskRef:
+        name: git-clone
+      workspaces:
+        - name: output
+          workspace: shared-data
+      params:
+        - name: url
+          value: $(params.git-url)
+        - name: revision
+          value: $(params.git-revision)
+        - name: deleteExisting
+          value: "true"
+
+    # Task 2: Run tests and linting
+    - name: test-code
+      taskRef:
+        name: npm-test
+      runAfter:
+        - fetch-source
+      workspaces:
+        - name: source
+          workspace: shared-data
+      params:
+        - name: ARGS
+          value: ["test"]
+
+    # Task 3: Build and push container image
+    - name: build-push-image
+      taskRef:
+        name: buildah-build-push
+      runAfter:
+        - test-code
+      workspaces:
+        - name: source
+          workspace: shared-data
+      params:
+        - name: IMAGE
+          value: "$(params.image-registry)/$(params.image-namespace)/$(params.image-name):$(params.image-tag)"
+        - name: DOCKERFILE
+          value: "./Dockerfile"
+        - name: CONTEXT
+          value: "."
+
+    # Task 4: Deploy to Kubernetes
+    - name: deploy-app
+      taskRef:
+        name: kubernetes-deploy
+      runAfter:
+        - build-push-image
+      params:
+        - name: image
+          value: "$(params.image-registry)/$(params.image-namespace)/$(params.image-name):$(params.image-tag)"
+        - name: namespace
+          value: $(params.deploy-namespace)
+        - name: app-name
+          value: $(params.app-name)
+        - name: replicas
+          value: "2"
+        - name: port
+          value: "3000"
+
+  results:
+    - name: image-digest
+      description: Digest of the built image
+      value: $(tasks.build-push-image.results.IMAGE_DIGEST)
+    - name: image-url
+      description: URL of the built image
+      value: $(tasks.build-push-image.results.IMAGE_URL)
+
+  finally:
+    # Final task to report pipeline status
+    - name: pipeline-status
+      params:
+        - name: aggregate-status
+          value: $(tasks.status)
+      taskSpec:
+        params:
+          - name: aggregate-status
+            type: string
+        steps:
+          - name: report-status
+            image: alpine:latest
+            script: |
+              #!/bin/sh
+              echo "============================================"
+              echo "TEKTON PIPELINE EXECUTION SUMMARY"
+              echo "============================================"
+              echo "Pipeline Status: $(params.aggregate-status)"
+              echo "Git Repository: $(params.git-url)"
+              echo "Git Revision: $(params.git-revision)"
+              echo "Built Image: $(params.image-registry)/$(params.image-namespace)/$(params.image-name):$(params.image-tag)"
+              echo "Deployed to Namespace: $(params.deploy-namespace)"
+              echo "Application Name: $(params.app-name)"
+              echo "============================================"
+              if [ "$(params.aggregate-status)" = "Succeeded" ]; then
+                echo "✅ Pipeline completed successfully!"
+              else
+                echo "❌ Pipeline failed. Check task logs for details."
+              fi
