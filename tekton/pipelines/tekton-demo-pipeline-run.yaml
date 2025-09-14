@@ -1,0 +1,54 @@
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  name: tekton-demo-pipeline-run
+  namespace: tekton-pipelines
+  labels:
+    app: tekton-demo
+    pipeline: tekton-demo-pipeline
+spec:
+  pipelineRef:
+    name: tekton-demo-pipeline
+  
+  params:
+    - name: git-url
+      value: "https://github.com/BharAnu2109/TektonPipeline.git"
+    - name: git-revision
+      value: "main"
+    - name: image-registry
+      value: "docker.io"
+    - name: image-namespace
+      value: "your-dockerhub-username"  # Replace with actual Docker Hub username
+    - name: image-name
+      value: "tekton-demo-app"
+    - name: image-tag
+      value: "v1.0.0"
+    - name: deploy-namespace
+      value: "default"
+    - name: app-name
+      value: "tekton-demo-app"
+  
+  workspaces:
+    - name: shared-data
+      volumeClaimTemplate:
+        spec:
+          accessModes:
+            - ReadWriteOnce
+          resources:
+            requests:
+              storage: 1Gi
+    - name: docker-credentials
+      secret:
+        secretName: docker-credentials
+        optional: true
+  
+  timeouts:
+    pipeline: "1h0m0s"
+    tasks: "0h30m0s"
+    finally: "0h5m0s"
+  
+  # Cleanup policy for completed pipeline runs
+  # podTemplate:
+  #   securityContext:
+  #     runAsNonRoot: true
+  #     runAsUser: 65532

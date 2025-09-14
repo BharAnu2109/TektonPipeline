@@ -1,0 +1,107 @@
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: buildah-build-push
+  namespace: tekton-pipelines
+spec:
+  description: Build and push container image using Buildah
+  params:
+    - name: IMAGE
+      description: Reference of the image buildah will produce
+      type: string
+    - name: BUILDER_IMAGE
+      description: The location of the buildah builder image
+      type: string
+      default: quay.io/buildah/stable:v1.23.1
+    - name: STORAGE_DRIVER
+      description: Set buildah storage driver
+      type: string
+      default: vfs
+    - name: DOCKERFILE
+      description: Path to the Dockerfile to build
+      type: string
+      default: ./Dockerfile
+    - name: CONTEXT
+      description: Path to the directory to use as context
+      type: string
+      default: .
+    - name: TLSVERIFY
+      description: Verify the TLS on the registry endpoint
+      type: string
+      default: "true"
+    - name: FORMAT
+      description: The format of the built container, oci or docker
+      type: string
+      default: "oci"
+    - name: BUILD_EXTRA_ARGS
+      description: Extra parameters passed for the build command when building images
+      type: string
+      default: ""
+    - name: PUSH_EXTRA_ARGS
+      description: Extra parameters passed for the push command when pushing images
+      type: string
+      default: ""
+    - name: SKIP_PUSH
+      description: Skip pushing the built image
+      type: string
+      default: "false"
+  workspaces:
+    - name: source
+      description: Workspace containing the source code to build
+  results:
+    - name: IMAGE_DIGEST
+      description: Digest of the image just built
+    - name: IMAGE_URL
+      description: URL of the image just built
+  steps:
+    - name: build-and-push
+      image: $(params.BUILDER_IMAGE)
+      workingDir: $(workspaces.source.path)
+      securityContext:
+        privileged: true
+      script: |
+        #!/bin/bash
+        set -e
+        
+        # Build the container image
+        echo "Building image $(params.IMAGE)..."
+        buildah --storage-driver=$(params.STORAGE_DRIVER) bud \
+          $(params.BUILD_EXTRA_ARGS) \
+          --format=$(params.FORMAT) \
+          --tls-verify=$(params.TLSVERIFY) \
+          --no-cache \
+          -f $(params.DOCKERFILE) \
+          -t $(params.IMAGE) \
+          $(params.CONTEXT)
+        
+        [[ "$(params.SKIP_PUSH)" == "true" ]] && echo "Push skipped" && exit 0
+        
+        # Push the image to registry
+        echo "Pushing image $(params.IMAGE)..."
+        buildah --storage-driver=$(params.STORAGE_DRIVER) push \
+          $(params.PUSH_EXTRA_ARGS) \
+          --tls-verify=$(params.TLSVERIFY) \
+          $(params.IMAGE) \
+          docker://$(params.IMAGE)
+        
+        # Get the image digest
+        echo "Getting image digest..."
+        buildah --storage-driver=$(params.STORAGE_DRIVER) images \
+          --format 'table {{.Name}} {{.Tag}} {{.Digest}}' \
+          | grep $(params.IMAGE) \
+          | awk '{print $3}' \
+          | head -1 > $(results.IMAGE_DIGEST.path)
+        
+        # Store the image URL
+        echo "$(params.IMAGE)" > $(results.IMAGE_URL.path)
+        
+        echo "Build and push completed successfully!"
+      volumeMounts:
+        - name: varlibcontainers
+          mountPath: /var/lib/containers
+      env:
+        - name: STORAGE_DRIVER
+          value: $(params.STORAGE_DRIVER)
+  volumes:
+    - name: varlibcontainers
+      emptyDir: {}

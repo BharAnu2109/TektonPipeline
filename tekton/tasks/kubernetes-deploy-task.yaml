@@ -1,0 +1,128 @@
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: kubernetes-deploy
+  namespace: tekton-pipelines
+spec:
+  description: Deploy application to Kubernetes
+  params:
+    - name: image
+      description: Image to deploy
+      type: string
+    - name: namespace
+      description: Namespace to deploy to
+      type: string
+      default: "default"
+    - name: app-name
+      description: Name of the application
+      type: string
+      default: "tekton-demo-app"
+    - name: replicas
+      description: Number of replicas
+      type: string
+      default: "2"
+    - name: port
+      description: Port the application listens on
+      type: string
+      default: "3000"
+  workspaces:
+    - name: kubeconfig
+      description: Workspace containing kubeconfig file
+      optional: true
+  steps:
+    - name: create-deployment
+      image: quay.io/openshift/origin-cli:latest
+      script: |
+        #!/bin/bash
+        set -e
+        
+        # Create or update deployment
+        cat <<EOF | kubectl apply -f -
+        apiVersion: apps/v1
+        kind: Deployment
+        metadata:
+          name: $(params.app-name)
+          namespace: $(params.namespace)
+          labels:
+            app: $(params.app-name)
+        spec:
+          replicas: $(params.replicas)
+          selector:
+            matchLabels:
+              app: $(params.app-name)
+          template:
+            metadata:
+              labels:
+                app: $(params.app-name)
+            spec:
+              containers:
+              - name: $(params.app-name)
+                image: $(params.image)
+                ports:
+                - containerPort: $(params.port)
+                env:
+                - name: NODE_ENV
+                  value: "production"
+                - name: PORT
+                  value: "$(params.port)"
+                resources:
+                  requests:
+                    memory: "128Mi"
+                    cpu: "100m"
+                  limits:
+                    memory: "256Mi"
+                    cpu: "200m"
+                livenessProbe:
+                  httpGet:
+                    path: /health
+                    port: $(params.port)
+                  initialDelaySeconds: 30
+                  periodSeconds: 10
+                readinessProbe:
+                  httpGet:
+                    path: /health
+                    port: $(params.port)
+                  initialDelaySeconds: 5
+                  periodSeconds: 5
+        EOF
+        
+        echo "Deployment created/updated successfully!"
+    
+    - name: create-service
+      image: quay.io/openshift/origin-cli:latest
+      script: |
+        #!/bin/bash
+        set -e
+        
+        # Create or update service
+        cat <<EOF | kubectl apply -f -
+        apiVersion: v1
+        kind: Service
+        metadata:
+          name: $(params.app-name)-service
+          namespace: $(params.namespace)
+          labels:
+            app: $(params.app-name)
+        spec:
+          selector:
+            app: $(params.app-name)
+          ports:
+          - port: 80
+            targetPort: $(params.port)
+            protocol: TCP
+          type: ClusterIP
+        EOF
+        
+        echo "Service created/updated successfully!"
+    
+    - name: wait-for-deployment
+      image: quay.io/openshift/origin-cli:latest
+      script: |
+        #!/bin/bash
+        set -e
+        
+        echo "Waiting for deployment to be ready..."
+        kubectl rollout status deployment/$(params.app-name) -n $(params.namespace) --timeout=300s
+        
+        echo "Deployment is ready!"
+        kubectl get pods -n $(params.namespace) -l app=$(params.app-name)
